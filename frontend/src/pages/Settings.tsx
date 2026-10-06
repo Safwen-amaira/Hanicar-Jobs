@@ -1,5 +1,5 @@
-import { FormEvent, useState } from "react";
-import { api, SmtpSettings } from "../api";
+import { FormEvent, useEffect, useState } from "react";
+import { api, Health, LlmPing, SmtpSettings } from "../api";
 import { loadSmtpSettings, saveSmtpSettings } from "../settings";
 
 export default function SettingsPage() {
@@ -7,6 +7,13 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState("");
   const [testing, setTesting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [ping, setPing] = useState<LlmPing | null>(null);
+  const [pinging, setPinging] = useState(false);
+
+  useEffect(() => {
+    api.health().then(setHealth).catch(() => setHealth(null));
+  }, []);
 
   function update<K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -18,7 +25,19 @@ export default function SettingsPage() {
     setMsg("SMTP settings saved on this device.");
   }
 
-  async function onTest() {
+  async function pingLlm() {
+    setPinging(true);
+    setMsg("");
+    try {
+      const result = await api.llmPing();
+      setPing(result);
+      setMsg(result.hint);
+    } catch (e) {
+      setMsg(String((e as Error).message || e));
+    } finally {
+      setPinging(false);
+    }
+  }
     setTesting(true);
     setMsg("");
     try {
@@ -66,7 +85,7 @@ export default function SettingsPage() {
       <header className="page-head">
         <div>
           <h1 className="page-title">Settings</h1>
-          <p className="page-sub">Mail delivery defaults for explicit, user-triggered application emails.</p>
+          <p className="page-sub">Mail delivery stays explicit. Live LLM drafting is optional and never auto-sends.</p>
         </div>
       </header>
       {msg && <p className="alert success mono">{msg}</p>}

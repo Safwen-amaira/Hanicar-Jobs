@@ -44,15 +44,44 @@ export function OpportunitiesPage() {
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [sort, setSort] = useState("score_desc");
   const [error, setError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [webQuery, setWebQuery] = useState("");
+  const [webLocation, setWebLocation] = useState("");
+  const [webCandidateId, setWebCandidateId] = useState("");
+  const [searchingWeb, setSearchingWeb] = useState(false);
+  const [webMsg, setWebMsg] = useState("");
 
   useEffect(() => {
-    Promise.all([api.opportunities(status || undefined), api.opportunityTypes()])
-      .then(([ops, typeRows]) => {
+    Promise.all([api.opportunities(status || undefined), api.opportunityTypes(), api.candidates()])
+      .then(([ops, typeRows, candidateRows]) => {
         setRows(ops);
         setTypes(typeRows);
+        setCandidates(candidateRows);
+        if (candidateRows[0] && !webCandidateId) setWebCandidateId(candidateRows[0].id);
       })
       .catch((e) => setError(String(e.message || e)));
   }, [status]);
+
+  async function runWebSearch() {
+    if (!webQuery.trim()) return;
+    setSearchingWeb(true);
+    setWebMsg("");
+    setError(null);
+    try {
+      const results = await api.webSearchOpportunities({
+        query: webQuery,
+        locations: webLocation ? webLocation.split(",").map((item) => item.trim()).filter(Boolean) : [],
+        candidate_id: webCandidateId || undefined,
+        limit: 60,
+      });
+      setRows(results);
+      setWebMsg(`${results.length} opportunities imported from public web sources.`);
+    } catch (e) {
+      setError(String((e as Error).message || e));
+    } finally {
+      setSearchingWeb(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const items = (rows || []).filter((o) => {
@@ -142,6 +171,25 @@ export function OpportunitiesPage() {
           <span>Remote only</span>
         </label>
       </div>
+      <div className="web-radar">
+        <div>
+          <span className="eyebrow">Web opportunity radar</span>
+          <h3>Search more public sources</h3>
+          <p className="muted-text">Imports matching roles from TanitJobs, Remotive, RemoteOK, Arbeitnow, Jobicy, The Muse, and We Work Remotely, then scores them when a candidate is selected.</p>
+        </div>
+        <div className="radar-controls">
+          <input aria-label="Web search query" placeholder="frontend react remote, data engineer, cybersecurity intern..." value={webQuery} onChange={(e) => setWebQuery(e.target.value)} />
+          <input aria-label="Locations" placeholder="Remote, Tunis, France" value={webLocation} onChange={(e) => setWebLocation(e.target.value)} />
+          <select aria-label="Candidate for scoring" value={webCandidateId} onChange={(e) => setWebCandidateId(e.target.value)}>
+            <option value="">No candidate scoring</option>
+            {candidates.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button className="btn primary" type="button" disabled={searchingWeb || !webQuery.trim()} onClick={() => void runWebSearch()}>
+            {searchingWeb ? "Searching..." : "Search web"}
+          </button>
+        </div>
+        {webMsg && <p className="alert success mono">{webMsg}</p>}
+      </div>
       {!rows && <div className="skeleton" style={{ height: 120 }} />}
       {rows && rows.length === 0 && <div className="empty">No opportunities yet - run SEARCH NOW.</div>}
       {rows && rows.length > 0 && filtered.length === 0 && <div className="empty">No opportunities match those filters.</div>}
@@ -188,6 +236,7 @@ export function OpportunityDetailPage() {
   const [candidateId, setCandidateId] = useState("");
   const [msg, setMsg] = useState("");
   const [draftId, setDraftId] = useState("");
+  const [manualOverride, setManualOverride] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -241,6 +290,10 @@ export function OpportunityDetailPage() {
               ))}
             </select>
           </div>
+          <label className="toggle-row">
+            <input type="checkbox" checked={manualOverride} onChange={(e) => setManualOverride(e.target.checked)} />
+            <span>Manual recontact override</span>
+          </label>
           <button
             className="btn primary"
             type="button"
@@ -249,6 +302,7 @@ export function OpportunityDetailPage() {
               const app = await api.createApplication({
                 opportunity_id: opp.id,
                 candidate_id: candidateId,
+                manual_recontact_override: manualOverride,
               });
               setDraftId(app.id);
               setMsg(`Draft created (${app.id.slice(0, 8)}) - never auto-sent.`);

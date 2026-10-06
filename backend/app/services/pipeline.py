@@ -160,6 +160,23 @@ class SearchPipeline:
             run.status = SearchRunStatus.completed
             run.stats = stats
             run.finished_at = datetime.now(timezone.utc)
+            from app.core.config import get_settings
+            from app.services.applications import ApplicationService
+
+            settings = get_settings()
+            if settings.auto_draft_enabled:
+                queued = await ApplicationService(self.session).automate_for_human_review(
+                    candidate_id=profile.candidate_id,
+                    min_score=settings.auto_draft_min_score,
+                    max_to_draft=settings.auto_draft_limit,
+                    polish_with_llm=settings.auto_polish_with_llm,
+                    prepare=settings.auto_prepare_enabled,
+                )
+                stats["auto_drafted"] = queued["created"]
+                stats["queued_for_review"] = queued.get("queued", 0)
+                stats["needs_human_fix"] = queued.get("needs_review", 0)
+                run.stats = stats
+                emit({"type": "auto_drafted", "message": "High-score matches prepared for human review", **queued})
             emit({"type": "completed", "stats": stats})
         except Exception as exc:
             run.status = SearchRunStatus.failed

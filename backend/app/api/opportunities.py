@@ -7,9 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import ExclusionDecision, Opportunity, OpportunityStatus, SearchRun
-from app.schemas import ExclusionOut, OpportunityOut, SearchRunOut
+from app.models import CandidateProfile, ExclusionDecision, Opportunity, OpportunityStatus, SearchProfile, SearchRun
+from app.schemas import ExclusionOut, OpportunityOut, OpportunityWebSearchIn, SearchRunOut
+from app.services.company_identity import CompanyIdentityService
+from app.services.exclusion import ExclusionEngine
+from app.services.matching import MatchingService
 from app.services.pipeline import SearchPipeline, get_run_queue
 
 router = APIRouter(prefix="/api", tags=["opportunities"])
@@ -78,6 +82,95 @@ async def get_opportunity(opportunity_id: UUID, db: AsyncSession = Depends(get_d
     if not opp:
         raise HTTPException(404, "Not found")
     return _opp_out(opp)
+
+
+@router.post("/opportunities/web-search", response_model=list[OpportunityOut])
+async def web_search_opportunities(body: OpportunityWebSearchIn, db: AsyncSession = Depends(get_db)):
+    keywords = [part.strip() for part in body.query.replace(",", " ").split() if part.strip()]
+    collectors = default_collectors()
+    identity = CompanyIdentityService(db)
+    exclusion = ExclusionEngine(db)
+    matching = MatchingService(exclusion)
+    candidate_profile = None
+    synthetic_profile = None
+    if body.candidate_id:
+        candidate_profile = await db.scalar(
+            select(CandidateProfile).where(CandidateProfile.candidate_id == body.candidate_id)
+        )
+        synthetic_profile = SearchProfile(
+            candidate_id=body.candidate_id,
+            name=f"Web search: {body.query[:80]}",
+            keywords=keywords,
+            locations=body.locations,
+            opportunity_type_codes=[],
+        )
+    persisted: list[Opportunity] = []
+    for collector in collectors:
+        try:
+            raws = await collector.collect(keywords, body.locations)
+        except Exception:
+            continue
+        for raw in raws:
+            if len(persisted) >= body.limit:
+                break
+            existing = await db.scalar(select(Opportunity).where(Opportunity.raw_hash == raw.content_hash()))
+            if existing:
+                persisted.append(existing)
+                continue
+            company = await identity.resolve(raw.company_name, domain=raw.company_domain, country=raw.country)
+            opp = Opportunity(
+                title=raw.title[:512],
+                description=raw.description,
+                company_id=company.id,
+                source=raw.source,
+                source_url=raw.source_url,
+                location=raw.location,
+                remote=raw.remote,
+                status=OpportunityStatus.new,
+                raw_hash=raw.content_hash(),
+            )
+            db.add(opp)
+            await db.flush()
+            if synthetic_profile is not None:
+                decisions = await exclusion.evaluate_opportunity(opp, candidate_id=body.candidate_id)
+                match = matching.score(opp, synthetic_profile, candidate_profile)
+                opp.match_score = match.score
+                opp.match_reasons = match.reasons
+                opp.skill_gaps = match.skill_gaps
+                if decisions:
+                    opp.status = OpportunityStatus.suppressed
+                else:
+                    opp.status = OpportunityStatus.matched
+            persisted.append(opp)
+        if len(persisted) >= body.limit:
+            break
+    await db.commit()
+    settings = get_settings()
+    if body.candidate_id and settings.auto_draft_enabled:
+        from app.services.applications import ApplicationService
+
+        await ApplicationService(db).automate_for_human_review(
+            candidate_id=body.candidate_id,
+            min_score=settings.auto_draft_min_score,
+            max_to_draft=settings.auto_draft_limit,
+            polish_with_llm=settings.auto_polish_with_llm,
+            prepare=settings.auto_prepare_enabled,
+        )
+        await db.commit()
+    ids = [opp.id for opp in persisted]
+    rows = (
+        await db.scalars(
+            select(Opportunity)
+            .options(
+                selectinload(Opportunity.company),
+                selectinload(Opportunity.opportunity_type),
+                selectinload(Opportunity.exclusion_decisions),
+            )
+            .where(Opportunity.id.in_(ids))
+            .order_by(Opportunity.match_score.desc().nullslast(), Opportunity.collected_at.desc())
+        )
+    ).all()
+    return [_opp_out(o) for o in rows]
 
 
 @router.get("/suppressed", response_model=list[OpportunityOut])

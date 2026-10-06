@@ -169,6 +169,7 @@ class ApplicationCreate(BaseModel):
     opportunity_id: UUID
     candidate_id: UUID
     override_notes: str = ""
+    manual_recontact_override: bool = False
 
 
 class ApplicationOut(BaseModel):
@@ -179,7 +180,15 @@ class ApplicationOut(BaseModel):
     draft_body: str
     override_log: list[Any]
     follow_up_due_at: Optional[datetime]
+    applied_at: Optional[datetime] = None
+    interview_at: Optional[datetime] = None
+    decision_at: Optional[datetime] = None
+    next_action_at: Optional[datetime] = None
+    contact_name: str = ""
+    contact_email: str = ""
+    notes: str = ""
     created_at: datetime
+    updated_at: Optional[datetime] = None
     opportunity_title: Optional[str] = None
     company_name: Optional[str] = None
     source: Optional[str] = None
@@ -189,8 +198,89 @@ class ApplicationOut(BaseModel):
 
 
 class ApplicationStatusUpdate(BaseModel):
-    status: str  # kanban column: draft|queued|sent|failed or custom pipeline labels
+    status: Optional[str] = None
     override_notes: str = ""
+    follow_up_due_at: Optional[datetime] = None
+    applied_at: Optional[datetime] = None
+    interview_at: Optional[datetime] = None
+    decision_at: Optional[datetime] = None
+    next_action_at: Optional[datetime] = None
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ApplicationRegenerateIn(BaseModel):
+    instructions: str = ""
+    tone: str = "concise"
+    include_email_subject: bool = True
+
+
+class ApplicationContactDiscoveryOut(BaseModel):
+    application_id: UUID
+    emails: list[str] = Field(default_factory=list)
+    apply_urls: list[str] = Field(default_factory=list)
+    selected_email: str = ""
+    note: str = ""
+
+
+class ApplicationBatchSendIn(BaseModel):
+    max_to_send: int = Field(default=5, ge=1, le=50)
+    delay_seconds: float = Field(default=8.0, ge=0.0, le=3600.0)
+    statuses: list[str] = Field(default_factory=lambda: ["prepared", "queued"])
+    smtp: Optional["SmtpSettingsIn"] = None
+    attach_cv: bool = True
+    attach_cover_letter: bool = True
+    dry_run: bool = True
+    manual_recontact_override: bool = False
+    human_verified_ids: list[UUID] = Field(default_factory=list)
+
+
+class ApplicationBatchSendOut(BaseModel):
+    attempted: int = 0
+    sent: int = 0
+    skipped: int = 0
+    dry_run: bool = True
+    results: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ApplicationBatchPrepareIn(BaseModel):
+    max_to_prepare: int = Field(default=8, ge=1, le=50)
+    statuses: list[str] = Field(default_factory=lambda: ["draft", "prepared", "queued"])
+    persist_contacts: bool = True
+    polish_with_llm: bool = True
+
+
+class ApplicationBatchPrepareOut(BaseModel):
+    attempted: int = 0
+    queued: int = 0
+    needs_review: int = 0
+    skipped: int = 0
+    results: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ApplicationAutoQueueIn(BaseModel):
+    candidate_id: UUID
+    min_score: float = Field(default=55.0, ge=0, le=100)
+    max_to_draft: int = Field(default=8, ge=1, le=40)
+    polish_with_llm: bool = True
+
+
+class ApplicationAutoQueueOut(BaseModel):
+    created: int = 0
+    skipped: int = 0
+    application_ids: list[str] = Field(default_factory=list)
+    queued: int = 0
+    needs_review: int = 0
+    prepare_skipped: int = 0
+    note: str = ""
+
+
+class OpportunityWebSearchIn(BaseModel):
+    query: str = Field(min_length=2, max_length=240)
+    locations: list[str] = Field(default_factory=list)
+    candidate_id: Optional[UUID] = None
+    limit: int = Field(default=40, ge=1, le=120)
 
 
 class SmtpSettingsIn(BaseModel):
@@ -215,6 +305,8 @@ class ApplicationEmailComposeOut(BaseModel):
     subject: str
     body: str
     suggested_attachments: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    ready: bool = False
 
 
 class ApplicationEmailSendIn(BaseModel):
@@ -224,6 +316,8 @@ class ApplicationEmailSendIn(BaseModel):
     smtp: Optional[SmtpSettingsIn] = None
     attach_cv: bool = True
     attach_cover_letter: bool = True
+    manual_recontact_override: bool = False
+    human_verified: bool = False
     extra_attachments: list[CandidateCvAttachmentUpdate] = Field(default_factory=list)
 
 
@@ -251,9 +345,42 @@ class HealthOut(BaseModel):
     version: str
     tagline: str
     ai_enabled: bool
+    llm_provider: str = "mock"
+    llm_model: str = "mock"
+    llm_live: bool = False
+    human_in_the_loop: bool = True
+    auto_send: bool = False
+    llm_hint: str = ""
+    auto_draft_enabled: bool = True
+    auto_polish_with_llm: bool = True
+
+
+class LlmPingOut(BaseModel):
+    ok: bool
+    live: bool
+    provider: str
+    model: str
+    sample: str = ""
+    human_in_the_loop: bool = True
+    auto_send: bool = False
+    hint: str = ""
 
 
 class MatchPreviewOut(BaseModel):
     score: float
     reasons: list[str]
     skill_gaps: list[str]
+
+
+class LlmStatusOut(BaseModel):
+    ai_enabled: bool
+    requested_provider: str = \"auto\"
+    provider: str
+    model: str
+    live: bool
+    human_in_the_loop: bool = True
+    auto_send: bool = False
+    auto_draft_enabled: bool = True
+    auto_polish_with_llm: bool = True
+    chain: list[str] = []
+    hint: str = \"\"

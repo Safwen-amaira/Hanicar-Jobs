@@ -11,6 +11,7 @@ import {
   SuppressedPage,
 } from "./pages/Opportunities";
 import KanbanPage from "./pages/Kanban";
+import ReviewApplicationsPage from "./pages/ReviewApplications";
 import SourcesPage from "./pages/Sources";
 import AboutPage from "./pages/About";
 import SettingsPage from "./pages/Settings";
@@ -34,6 +35,7 @@ function RoutedApp() {
       <Route path="/opportunities/:id" element={<OpportunityDetailPage />} />
       <Route path="/suppressed" element={<SuppressedPage />} />
       <Route path="/applications" element={<KanbanPage />} />
+      <Route path="/applications/review" element={<ReviewApplicationsPage />} />
       <Route path="/kanban" element={<KanbanPage />} />
       <Route path="/sources" element={<SourcesPage />} />
       <Route path="/settings" element={<SettingsPage />} />

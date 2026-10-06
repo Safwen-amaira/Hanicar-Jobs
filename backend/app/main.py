@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 
 from app.api import (
     applications,
@@ -20,11 +21,49 @@ from app.db.session import AsyncSessionLocal, engine
 import app.models  # noqa: F401 - register models
 
 
+async def _ensure_application_tracker_columns() -> None:
+    async with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "postgresql":
+            for value in (
+                "prepared",
+                "applied",
+                "interviewing",
+                "offer",
+                "rejected",
+                "withdrawn",
+            ):
+                await conn.execute(
+                    text(f"ALTER TYPE application_status ADD VALUE IF NOT EXISTS '{value}'")
+                )
+
+        def current_columns(sync_conn):
+            inspector = inspect(sync_conn)
+            if "applications" not in inspector.get_table_names():
+                return set()
+            return {col["name"] for col in inspector.get_columns("applications")}
+
+        columns = await conn.run_sync(current_columns)
+        additions = {
+            "applied_at": "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "DATETIME",
+            "interview_at": "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "DATETIME",
+            "decision_at": "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "DATETIME",
+            "next_action_at": "TIMESTAMP WITH TIME ZONE" if dialect == "postgresql" else "DATETIME",
+            "contact_name": "VARCHAR(255) DEFAULT ''",
+            "contact_email": "VARCHAR(320) DEFAULT ''",
+            "notes": "TEXT DEFAULT ''",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                await conn.execute(text(f"ALTER TABLE applications ADD COLUMN {name} {ddl}"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables for compose boot (alembic also available)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_application_tracker_columns()
     async with AsyncSessionLocal() as session:
         await run_startup_seeds(session)
     yield

@@ -49,8 +49,14 @@ class OpportunityStatus(str, enum.Enum):
 
 class ApplicationStatus(str, enum.Enum):
     draft = "draft"
+    prepared = "prepared"
     queued = "queued"
     sent = "sent"
+    applied = "applied"
+    interviewing = "interviewing"
+    offer = "offer"
+    rejected = "rejected"
+    withdrawn = "withdrawn"
     failed = "failed"
 
 
@@ -268,6 +274,13 @@ class Application(Base):
     draft_body: Mapped[str] = mapped_column(Text, default="")
     override_log: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     follow_up_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    interview_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_action_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    contact_name: Mapped[str] = mapped_column(String(255), default="")
+    contact_email: Mapped[str] = mapped_column(String(320), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

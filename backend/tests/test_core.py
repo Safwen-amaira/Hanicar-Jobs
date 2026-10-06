@@ -46,6 +46,21 @@ def test_matching_keyword_score():
     assert any("Keyword" in r for r in result.reasons)
 
 
+def test_llm_status_falls_back_without_keys():
+    import asyncio
+
+    from app.llm.providers import get_provider, is_fallback_text, llm_status
+
+    status = llm_status()
+    assert status["human_in_the_loop"] is True
+    assert status["auto_send"] is False
+    assert status["provider"] in {"mock", "auto", "groq", "gemini", "openai", "ollama", "kaggle", "pollinations"}
+    provider = get_provider()
+    text = asyncio.run(provider.complete("hello"))
+    if provider.name in {"mock", "kaggle"} or not getattr(provider, "api_key", "x"):
+        assert text
+
+
 def test_health_module_imports():
     from app.main import app
 

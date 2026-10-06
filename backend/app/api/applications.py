@@ -14,11 +14,19 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Application, Candidate, Company, Opportunity
 from app.schemas import (
+    ApplicationBatchPrepareIn,
+    ApplicationBatchPrepareOut,
+    ApplicationAutoQueueIn,
+    ApplicationAutoQueueOut,
+    ApplicationBatchSendIn,
+    ApplicationBatchSendOut,
     ApplicationCreate,
+    ApplicationContactDiscoveryOut,
     ApplicationEmailComposeOut,
     ApplicationEmailSendIn,
     ApplicationEmailSendOut,
     ApplicationOut,
+    ApplicationRegenerateIn,
     ApplicationStatusUpdate,
     SmtpSettingsIn,
     SmtpTestOut,
@@ -37,7 +45,15 @@ def _out(app: Application, opp: Opportunity | None = None, company: Company | No
         draft_body=app.draft_body,
         override_log=app.override_log or [],
         follow_up_due_at=app.follow_up_due_at,
+        applied_at=app.applied_at,
+        interview_at=app.interview_at,
+        decision_at=app.decision_at,
+        next_action_at=app.next_action_at,
+        contact_name=app.contact_name or "",
+        contact_email=app.contact_email or "",
+        notes=app.notes or "",
         created_at=app.created_at,
+        updated_at=app.updated_at,
         opportunity_title=opp.title if opp else None,
         company_name=company.canonical_name if company else None,
         source=opp.source if opp else None,
@@ -50,10 +66,13 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
     svc = ApplicationService(db)
     try:
         app = await svc.create_draft(
-            body.opportunity_id, body.candidate_id, override_notes=body.override_notes
+            body.opportunity_id,
+            body.candidate_id,
+            override_notes=body.override_notes,
+            manual_recontact_override=body.manual_recontact_override,
         )
     except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(409 if "already contacted" in str(exc) else 404, str(exc)) from exc
     opp = await db.get(Opportunity, app.opportunity_id)
     company = await db.get(Company, opp.company_id) if opp and opp.company_id else None
     return _out(app, opp, company)
@@ -81,9 +100,40 @@ async def update_application(
 ):
     svc = ApplicationService(db)
     try:
-        app = await svc.update_status(application_id, body.status, body.override_notes)
+        app = await svc.update_status(
+            application_id,
+            body.status,
+            body.override_notes,
+            follow_up_due_at=body.follow_up_due_at,
+            applied_at=body.applied_at,
+            interview_at=body.interview_at,
+            decision_at=body.decision_at,
+            next_action_at=body.next_action_at,
+            contact_name=body.contact_name,
+            contact_email=body.contact_email,
+            notes=body.notes,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    opp = await db.get(Opportunity, app.opportunity_id)
+    company = await db.get(Company, opp.company_id) if opp and opp.company_id else None
+    return _out(app, opp, company)
+
+
+@router.post("/{application_id}/regenerate", response_model=ApplicationOut)
+async def regenerate_application(
+    application_id: UUID, body: ApplicationRegenerateIn, db: AsyncSession = Depends(get_db)
+):
+    svc = ApplicationService(db)
+    try:
+        app = await svc.regenerate_draft(
+            application_id,
+            instructions=body.instructions,
+            tone=body.tone,
+            include_email_subject=body.include_email_subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
     opp = await db.get(Opportunity, app.opportunity_id)
     company = await db.get(Company, opp.company_id) if opp and opp.company_id else None
     return _out(app, opp, company)
@@ -100,7 +150,7 @@ async def due_follow_ups(db: AsyncSession = Depends(get_db)):
             .where(
                 Application.follow_up_due_at.is_not(None),
                 Application.follow_up_due_at <= now,
-                Application.status.in_(["draft", "queued", "sent"]),
+                Application.status.in_(["draft", "prepared", "queued", "sent", "applied", "interviewing"]),
             )
         )
     ).all()
@@ -115,7 +165,7 @@ async def follow_up_draft(application_id: UUID, db: AsyncSession = Depends(get_d
     candidate = await db.get(Candidate, app.candidate_id)
     opp = await db.get(Opportunity, app.opportunity_id)
     svc = ApplicationService(db)
-    draft = svc.follow_up_draft(app, candidate, opp.title if opp else "your role")
+    draft = await svc.follow_up_draft(app, candidate, opp.title if opp else "your role")
     return {
         "application_id": str(app.id),
         "draft": draft,
@@ -130,6 +180,17 @@ async def compose_email(application_id: UUID, db: AsyncSession = Depends(get_db)
     svc = ApplicationService(db)
     try:
         return await svc.compose_email(application_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.get("/{application_id}/discover-contact", response_model=ApplicationContactDiscoveryOut)
+async def discover_contact(application_id: UUID, db: AsyncSession = Depends(get_db)):
+    svc = ApplicationService(db)
+    try:
+        result = await svc.discover_application_contact(application_id, persist=True)
+        await db.commit()
+        return result
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -178,6 +239,8 @@ async def send_email(
             attach_cv=body.attach_cv,
             attach_cover_letter=body.attach_cover_letter,
             extra_attachments=[a.model_dump() for a in body.extra_attachments],
+            manual_recontact_override=body.manual_recontact_override,
+            human_verified=body.human_verified,
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -191,6 +254,55 @@ async def send_email(
     if result["sent"]:
         await db.commit()
     return ApplicationEmailSendOut(**result)
+
+
+@router.post("/batch-prepare", response_model=ApplicationBatchPrepareOut)
+async def batch_prepare(body: ApplicationBatchPrepareIn, db: AsyncSession = Depends(get_db)):
+    svc = ApplicationService(db)
+    result = await svc.prepare_batch(
+        max_to_prepare=body.max_to_prepare,
+        statuses=body.statuses,
+        persist_contacts=body.persist_contacts,
+        polish_with_llm=body.polish_with_llm,
+    )
+    await db.commit()
+    return ApplicationBatchPrepareOut(**result)
+
+
+@router.post("/auto-queue", response_model=ApplicationAutoQueueOut)
+async def auto_queue(body: ApplicationAutoQueueIn, db: AsyncSession = Depends(get_db)):
+    svc = ApplicationService(db)
+    result = await svc.automate_for_human_review(
+        candidate_id=body.candidate_id,
+        min_score=body.min_score,
+        max_to_draft=body.max_to_draft,
+        polish_with_llm=body.polish_with_llm,
+        prepare=True,
+    )
+    await db.commit()
+    return ApplicationAutoQueueOut(**result)
+
+
+@router.post("/batch-send", response_model=ApplicationBatchSendOut)
+async def batch_send(body: ApplicationBatchSendIn, db: AsyncSession = Depends(get_db)):
+    svc = ApplicationService(db)
+    try:
+        result = await svc.batch_send(
+            max_to_send=body.max_to_send,
+            delay_seconds=body.delay_seconds,
+            statuses=body.statuses,
+            smtp_settings=body.smtp.model_dump() if body.smtp else None,
+            attach_cv=body.attach_cv,
+            attach_cover_letter=body.attach_cover_letter,
+            dry_run=body.dry_run,
+            manual_recontact_override=body.manual_recontact_override,
+            human_verified_ids=body.human_verified_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not body.dry_run:
+        await db.commit()
+    return ApplicationBatchSendOut(**result)
 
 
 @router.get("/{application_id}/pdf")
@@ -241,3 +353,19 @@ async def cover_letter_pdf(application_id: UUID, db: AsyncSession = Depends(get_
         },
     )
 
+
+@router.get("/{application_id}/cv.pdf")
+async def cv_pdf(application_id: UUID, db: AsyncSession = Depends(get_db)):
+    app = await db.get(Application, application_id)
+    if not app:
+        raise HTTPException(404, "Not found")
+    svc = ApplicationService(db)
+    try:
+        pdf = await svc.cv_pdf_bytes(app.candidate_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="ats-cv-{application_id}.pdf"'},
+    )

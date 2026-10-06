@@ -12,6 +12,9 @@ export default function ProfilesPage() {
   const [cvFileName, setCvFileName] = useState("");
   const [coverLetterFileName, setCoverLetterFileName] = useState("");
   const [profilePrefs, setProfilePrefs] = useState<Record<string, unknown>>({});
+  const [phone, setPhone] = useState("");
+  const [linkedin, setLinkedin] = useState("");
+  const [github, setGithub] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
 
   const [name, setName] = useState("");
@@ -47,6 +50,9 @@ export default function ProfilesPage() {
         setCv(profile.cv_text || "");
         setSkills((profile.skills || []).join(", "));
         setProfilePrefs(profile.preferences || {});
+        setPhone(String(profile.preferences?.phone || ""));
+        setLinkedin(String(profile.preferences?.linkedin || ""));
+        setGithub(String(profile.preferences?.github || ""));
         const attachment = profile.preferences?.cv_attachment as { filename?: string } | undefined;
         const coverLetterAttachment = profile.preferences?.cover_letter_attachment as { filename?: string } | undefined;
         setCvFileName(attachment?.filename || "");
@@ -82,7 +88,7 @@ export default function ProfilesPage() {
     await api.updateProfile(selected, {
       cv_text: cv,
       skills: skills.split(",").map((s) => s.trim()).filter(Boolean),
-      preferences: profilePrefs,
+      preferences: { ...profilePrefs, phone, linkedin, github },
     });
     setMsg("CV profile saved");
   }
@@ -218,6 +224,18 @@ export default function ProfilesPage() {
           <div className="field">
             <label htmlFor="cv">CV text</label>
             <textarea id="cv" rows={7} value={cv} onChange={(e) => setCv(e.target.value)} disabled={loadingProfile} />
+          </div>
+          <div className="field">
+            <label htmlFor="phone">Phone for cover letters</label>
+            <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={loadingProfile} placeholder="+216 ..." />
+          </div>
+          <div className="field">
+            <label htmlFor="linkedin">LinkedIn URL</label>
+            <input id="linkedin" value={linkedin} onChange={(e) => setLinkedin(e.target.value)} disabled={loadingProfile} placeholder="https://www.linkedin.com/in/..." />
+          </div>
+          <div className="field">
+            <label htmlFor="github">GitHub URL</label>
+            <input id="github" value={github} onChange={(e) => setGithub(e.target.value)} disabled={loadingProfile} placeholder="https://github.com/..." />
           </div>
           <div className="field">
             <label htmlFor="cvfile">CV attachment for emails</label>
