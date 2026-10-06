@@ -281,9 +281,9 @@ class Application(Base):
     contact_name: Mapped[str] = mapped_column(String(255), default="")
     contact_email: Mapped[str] = mapped_column(String(320), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), default=datetime.now, server_default=func.now(), onupdate=func.now()
     )
 
 

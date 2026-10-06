@@ -102,12 +102,18 @@ class ApplicationService:
         if use_llm:
             llm = CachedLLM(self.session)
             polished = await llm.complete(
-                "Rewrite this as an ATS-friendly cover letter and email body. "
-                "Read the full offer carefully. Use simple section-free paragraphs, include the role title and company, "
-                "and use only evidence present in the CV/profile. Do not include source names, source URLs, job-board URLs, "
-                "or any links except the candidate email, phone number, LinkedIn, and GitHub in the signature. "
-                "Do not invent skills, employers, degrees, certifications, dates, metrics, or contact details. Keep it concise.",
-                system="You draft ATS-friendly job applications. Never invent credentials.",
+                "Write an exceptional, professional, ATS-optimized cover letter and email body. "
+                "Read the full job offer carefully and align the candidate's real experience directly with the top requirements.\n"
+                "Structure guidance:\n"
+                "- Subject line: Clear email subject mentioning position and company\n"
+                "- Professional Salutation\n"
+                "- Engaging opening stating the role and enthusiasm for the company\n"
+                "- 2 concise body paragraphs linking candidate's actual skills/achievements to the job responsibilities\n"
+                "- Strong closing paragraph with clear call to action\n"
+                "- Professional signature block with contact details\n\n"
+                "Strict constraints: Use ONLY facts, skills, and experience present in the candidate CV/evidence. "
+                "Do NOT invent credentials, certifications, or metrics. Do not include external job-board links. Keep tone confident, persuasive, and professional.",
+                system="You are an expert executive recruiter writing high-converting, truthful cover letters.",
                 untrusted_label="JOB_AND_DRAFT",
                 untrusted_body=(
                     f"FULL_JOB_OFFER:\n{opp.title}\n{full_offer[:12000]}\n\n"
@@ -583,12 +589,17 @@ class ApplicationService:
         subject_rule = "Start with a Subject: line." if include_email_subject else "Do not include a Subject: line."
         llm = CachedLLM(self.session)
         draft = await llm.complete(
-            "Create an ATS-friendly cover letter/email draft for this application. "
-            f"Tone: {tone}. {subject_rule} Use plain paragraphs, recruiter-safe wording, and measurable claims only when present. "
-            "Read the full job offer before drafting. Do not include source names, source URLs, job-board URLs, or links except "
-            "the candidate email, phone number, LinkedIn, and GitHub in the signature. "
-            "Do not invent skills, employment history, dates, certificates, degrees, tools, metrics, or contact details.",
-            system="You are a careful career assistant creating truthful, ATS-friendly application material.",
+            "Write an exceptional, professional, ATS-optimized cover letter for this job application. "
+            f"Tone: {tone}. {subject_rule}\n"
+            "Structure:\n"
+            "- Professional Salutation (e.g. Dear Hiring Team / Hiring Manager)\n"
+            "- Strong opening paragraph connecting candidate background to the specific job role\n"
+            "- 2 focused body paragraphs highlighting matching skills and achievements from the CV\n"
+            "- Professional closing with clear call to action\n"
+            "- Complete signature block with allowed contact details\n\n"
+            "Strict constraints: Base every claim strictly on the candidate CV evidence. Do NOT invent skills, employers, or metrics. "
+            "Do not include external job-board URLs.",
+            system="You are an expert executive career advisor crafting compelling, ATS-friendly cover letters.",
             untrusted_label="APPLICATION_CONTEXT",
             untrusted_body=(
                 f"CANDIDATE:\n{candidate.name}\n\n"
@@ -729,56 +740,99 @@ class ApplicationService:
     def cover_letter_pdf_bytes(
         self, app: Application, candidate: Candidate, opp: Opportunity, body: str | None = None
     ) -> bytes:
+        from reportlab.lib.colors import HexColor
+
         company = opp.company.canonical_name if opp.company else "Hiring Team"
         subject, default_body = self.split_subject(app.draft_body, opp.title)
         text = body or default_body
-        profile = None
+
         buf = BytesIO()
         c = canvas.Canvas(buf, pagesize=A4)
         width, height = A4
         left = 54
         right = width - 54
-        line_height = 14
-        c.setTitle(f"ATS Cover Letter - {opp.title}")
+
+        c.setTitle(f"Cover Letter - {candidate.name} - {opp.title}")
         c.setAuthor(candidate.name)
         c.setSubject(subject)
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(left, height - 50, candidate.name)
+
+        primary_color = HexColor("#0F172A")
+        secondary_color = HexColor("#334155")
+        muted_color = HexColor("#64748B")
+        line_color = HexColor("#CBD5E1")
+
+        # Header
+        c.setFillColor(primary_color)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(left, height - 54, candidate.name)
+
+        c.setFillColor(secondary_color)
+        c.setFont("Helvetica", 9.5)
+        c.drawString(left, height - 68, candidate.email)
+        c.linkURL(f"mailto:{candidate.email}", (left, height - 72, left + 220, height - 62), relative=0)
+
+        c.setStrokeColor(line_color)
+        c.setLineWidth(1)
+        c.line(left, height - 78, right, height - 78)
+
+        # Recipient & Date
+        y = height - 98
+        today_str = datetime.now().strftime("%B %d, %Y")
+        c.setFillColor(muted_color)
         c.setFont("Helvetica", 9)
-        c.drawString(left, height - 66, candidate.email)
-        c.linkURL(f"mailto:{candidate.email}", (left, height - 68, left + 260, height - 58), relative=0)
-        c.drawString(left, height - 84, f"{company} - {opp.title}"[:110])
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(left, height - 116, subject[:96])
-        c.setFont("Helvetica", 11)
-        y = height - 148
+        c.drawString(left, y, today_str)
+
+        y -= 20
+        c.setFillColor(primary_color)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(left, y, company)
+
+        y -= 14
+        c.setFillColor(secondary_color)
+        c.setFont("Helvetica", 10)
+        c.drawString(left, y, f"Position: {opp.title}")
+
+        y -= 22
+        if subject:
+            c.setFillColor(primary_color)
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(left, y, subject[:100])
+            y -= 18
+
+        # Body Text
+        c.setFillColor(secondary_color)
+        c.setFont("Helvetica", 10.5)
+        line_height = 15
 
         def draw_wrapped(paragraph: str, current_y: float) -> float:
             clean = " ".join(paragraph.split())
-            lines = textwrap.wrap(clean, width=92) or [""]
+            if not clean:
+                return current_y - 8
+            lines = textwrap.wrap(clean, width=88) or [""]
             for line in lines:
                 if current_y < 54:
                     c.showPage()
-                    c.setFont("Helvetica", 11)
+                    c.setFillColor(secondary_color)
+                    c.setFont("Helvetica", 10.5)
                     current_y = height - 54
                 c.drawString(left, current_y, line[:110])
                 link_target = self._line_link_target(line)
                 if link_target:
                     c.linkURL(
                         link_target,
-                        (left, current_y - 2, min(right, left + c.stringWidth(line[:110], "Helvetica", 11)), current_y + 11),
+                        (left, current_y - 2, min(right, left + c.stringWidth(line[:110], "Helvetica", 10.5)), current_y + 11),
                         relative=0,
                     )
                 current_y -= line_height
-            return current_y
+            return current_y - 6
 
         for raw_line in text.splitlines() or [""]:
             y = draw_wrapped(raw_line, y)
-            if raw_line.strip() == "":
-                y -= 4
+
+        c.setFillColor(muted_color)
         c.setFont("Helvetica", 8)
-        c.drawString(left, 34, self.settings.copyright[:120])
-        c.drawRightString(right, 34, "ATS-friendly plain text layout")
+        c.drawString(left, 34, f"{candidate.name} — Cover Letter")
+        c.drawRightString(right, 34, "ATS-Friendly Format")
         c.showPage()
         c.save()
         return buf.getvalue()

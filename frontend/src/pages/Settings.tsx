@@ -38,6 +38,8 @@ export default function SettingsPage() {
       setPinging(false);
     }
   }
+
+  async function onTest() {
     setTesting(true);
     setMsg("");
     try {

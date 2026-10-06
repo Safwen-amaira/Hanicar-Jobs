@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from io import BytesIO
 import smtplib
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,24 +37,42 @@ from app.services.applications import ApplicationService
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
 
+def _safe_attr(obj: Any, attr: str, default: Any = None) -> Any:
+    try:
+        val = obj.__dict__.get(attr)
+        if val is None or "Symbol" in str(type(val)) or "NO_VALUE" in str(val):
+            return default
+        return val
+    except Exception:
+        return default
+
+
+def _safe_datetime(obj: Any, attr: str) -> datetime:
+    val = _safe_attr(obj, attr)
+    if isinstance(val, datetime):
+        return val
+    return datetime.now(timezone.utc)
+
+
 def _out(app: Application, opp: Opportunity | None = None, company: Company | None = None) -> ApplicationOut:
+    status_val = app.status.value if hasattr(app.status, "value") else str(app.status)
     return ApplicationOut(
         id=app.id,
         opportunity_id=app.opportunity_id,
         candidate_id=app.candidate_id,
-        status=app.status.value,
-        draft_body=app.draft_body,
+        status=status_val,
+        draft_body=app.draft_body or "",
         override_log=app.override_log or [],
-        follow_up_due_at=app.follow_up_due_at,
-        applied_at=app.applied_at,
-        interview_at=app.interview_at,
-        decision_at=app.decision_at,
-        next_action_at=app.next_action_at,
+        follow_up_due_at=_safe_attr(app, "follow_up_due_at"),
+        applied_at=_safe_attr(app, "applied_at"),
+        interview_at=_safe_attr(app, "interview_at"),
+        decision_at=_safe_attr(app, "decision_at"),
+        next_action_at=_safe_attr(app, "next_action_at"),
         contact_name=app.contact_name or "",
         contact_email=app.contact_email or "",
         notes=app.notes or "",
-        created_at=app.created_at,
-        updated_at=app.updated_at,
+        created_at=_safe_datetime(app, "created_at"),
+        updated_at=_safe_datetime(app, "updated_at"),
         opportunity_title=opp.title if opp else None,
         company_name=company.canonical_name if company else None,
         source=opp.source if opp else None,

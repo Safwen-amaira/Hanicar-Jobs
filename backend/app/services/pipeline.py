@@ -185,7 +185,7 @@ class SearchPipeline:
             emit({"type": "failed", "error": str(exc)})
             raise
         finally:
-            await self.session.commit()
+            await self.session.flush()
         return run
 
     async def _record_source(self, name: str, *, ok: bool, error: str | None = None) -> None:

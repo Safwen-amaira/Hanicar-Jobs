@@ -374,7 +374,7 @@ class MatchPreviewOut(BaseModel):
 
 class LlmStatusOut(BaseModel):
     ai_enabled: bool
-    requested_provider: str = \"auto\"
+    requested_provider: str = "auto"
     provider: str
     model: str
     live: bool
@@ -383,4 +383,4 @@ class LlmStatusOut(BaseModel):
     auto_draft_enabled: bool = True
     auto_polish_with_llm: bool = True
     chain: list[str] = []
-    hint: str = \"\"
+    hint: str = ""
