@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hanicar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hanicar}
+      POSTGRES_DB: ${POSTGRES_DB:-hanicar_jobs}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hanicar -d hanicar_jobs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      HJ_DATABASE_URL: postgresql+asyncpg://hanicar:hanicar@postgres:5432/hanicar_jobs
+      HJ_DATABASE_URL_SYNC: postgresql+psycopg2://hanicar:hanicar@postgres:5432/hanicar_jobs
+      HJ_REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+    env_file: .env
+    environment:
+      HJ_DATABASE_URL: postgresql+asyncpg://hanicar:hanicar@postgres:5432/hanicar_jobs
+      HJ_DATABASE_URL_SYNC: postgresql+psycopg2://hanicar:hanicar@postgres:5432/hanicar_jobs
+      HJ_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  scheduler:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
+    env_file: .env
+    environment:
+      HJ_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+      - worker
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
